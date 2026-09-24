@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>AHPATSOUM — Moussa</title>
+<style>
+html,body{margin:0;height:100%;overflow:hidden;background:#071018;font-family:Arial;color:white;touch-action:none}
+canvas{position:fixed;inset:0;width:100%;height:100%}
+#hud{position:fixed;inset:0;pointer-events:none}
+.p{position:absolute;top:12px;padding:9px 13px;background:#071018cc;border:1px solid #ffffff25;border-radius:16px;font-weight:bold}
+#score{left:10px}#coins{left:50%;transform:translateX(-50%)}#speed{right:10px}#life{left:10px;top:58px}
+#menu{position:fixed;inset:0;display:grid;place-items:center}
+.card{width:min(600px,90vw);padding:28px;border-radius:25px;text-align:center;background:#071018ed;border:1px solid #ffffff25}
+h1{font-size:clamp(42px,12vw,76px);letter-spacing:.14em;margin:0}
+button{width:100%;min-height:55px;margin:7px 0;border:0;border-radius:16px;background:#237cf0;color:white;font-size:17px;font-weight:bold}
+.secondary{background:#18232d}
+#adbox{position:fixed;inset:0;background:#000b;display:grid;place-items:center;z-index:20}
+#adbox .adcard{width:min(360px,86vw);padding:24px;border-radius:22px;background:#101820;text-align:center;border:1px solid #ffffff25}
+#controls{position:fixed;bottom:15px;left:0;right:0;display:flex;justify-content:space-around}
+.c{width:62px;height:55px;border-radius:17px;background:#071018b8;border:1px solid #ffffff25;display:grid;place-items:center;font-size:25px}
+.hidden{display:none!important}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="hud">
+ <div id="score" class="p">SCORE <span>0</span></div>
+ <div id="coins" class="p">🪙 <span>0</span></div>
+ <div id="speed" class="p"><span>1.0</span>x</div>
+ <div id="life" class="p">❤❤❤</div>
+</div>
+<div id="menu">
+ <div class="card" id="home">
+  <h1>AHPATSOUM</h1>
+  <p>MOUSSA • REAL RUNNER</p>
+  <p>Monde à l'échelle : humain ≈ 1,75 m • voiture ≈ 4,5 m • voie ≈ 3,5 m</p>
+  <p style="font-size:13px;color:#9da9b2">Pub interstitielle : toutes les 2 parties • Pub récompensée : au choix</p>
+  <button id="play">COMMENCER</button>
+  <button id="shop" class="secondary">BOUTIQUE</button>
+ </div>
+ <div class="card hidden" id="over">
+  <h2>COURSE TERMINÉE</h2><p>Score : <b id="final">0</b></p>
+  <button id="reward">🎁 REGARDER UNE PUB POUR +100 PIÈCES</button>
+  <button id="again">REJOUER</button><button id="menuBtn" class="secondary">MENU</button>
+ </div>
+</div>
+<div id="adbox" class="hidden"><div class="adcard"><h2>PUBLICITÉ</h2><p id="adtext">Annonce de test</p><p style="color:#9da9b2;font-size:13px">La vraie publicité AdMob sera intégrée dans l'application Android.</p><button id="closeAd">CONTINUER</button></div></div>
+<div id="controls">
+ <div class="c" data-a="left">←</div><div class="c" data-a="jump">↑</div>
+ <div class="c" data-a="slide">↓</div><div class="c" data-a="right">→</div>
+</div>
+<script>
+const c=document.getElementById('game'),ctx=c.getContext('2d');
+let W,H,dpr=1;function resize(){W=innerWidth;H=innerHeight;dpr=Math.min(2,devicePixelRatio||1);c.width=W*dpr;c.height=H*dpr;ctx.setTransform(dpr,0,0,dpr,0,0)}resize();addEventListener('resize',resize);
+
+let playing=false,score=0,coins=+localStorage.getItem('ahp_coins')||0,lives=3,speed=18,distance=0;
+let completedGames=+localStorage.getItem('ahp_completed_games')||0;
+let lane=1,targetLane=1,jump=0,vy=0,slide=0,objects=[],spawn=0,coinSpawn=0,last=performance.now();
+const laneWidth=3.5, roadWidth=10.5, human=1.75;
+function laneX(l){return(l-1)*laneWidth}
+function project(x,z,y=0){
+ const cameraHeight=5.2,back=9,f=H*.83/Math.max(1,z+back);
+ const cameraFollow=(lane-1)*laneWidth*0.58;
+ return {x:W/2+(x-cameraFollow)*f,y:H*.39-(y-cameraHeight)*f,s:f}
+}
+function ui(){document.querySelector('#score span').textContent=Math.floor(score);document.querySelector('#coins span').textContent=coins;document.querySelector('#speed span').textContent=(speed/18).toFixed(1);document.getElementById('life').textContent='❤'.repeat(lives)+'♡'.repeat(3-lives)}
+function start(){playing=true;score=0;lives=3;speed=18;distance=0;lane=targetLane=1;jump=0;vy=0;slide=0;objects=[];spawn=.8;coinSpawn=.7;document.getElementById('menu').classList.add('hidden');ui()}
+function end(){
+ playing=false;
+ completedGames++;
+ localStorage.setItem('ahp_completed_games',completedGames);
+ coins+=0;
+ document.getElementById('final').textContent=Math.floor(score);document.getElementById('menu').classList.remove('hidden');document.getElementById('home').classList.add('hidden');document.getElementById('over').classList.remove('hidden');ui();
+ if(completedGames%2===0) setTimeout(()=>showAd(false),120);
+}
+function act(a){if(!playing)return;if(a==='left')targetLane=Math.max(0,targetLane-1);if(a==='right')targetLane=Math.min(2,targetLane+1);if(a==='jump'&&jump===0&&slide<=0)vy=15.2;if(a==='slide'&&jump===0)slide=.7}
+document.getElementById('play').onclick=start;document.getElementById('again').onclick=start;
+document.getElementById('reward').onclick=()=>{
+  // Development placeholder for a rewarded ad.
+  showAd(true);
+};
+document.getElementById('menuBtn').onclick=()=>{document.getElementById('over').classList.add('hidden');document.getElementById('home').classList.remove('hidden')};
+document.querySelectorAll('.c').forEach(b=>b.onpointerdown=e=>{e.preventDefault();act(b.dataset.a)});
+function showAd(rewarded=false){
+  document.getElementById('adbox').classList.remove('hidden');
+  document.getElementById('adtext').textContent=rewarded?'Annonce récompensée de test : récompense après visionnage.':'Annonce interstitielle de test — après 2 parties.';
+  document.getElementById('closeAd').onclick=()=>{
+    document.getElementById('adbox').classList.add('hidden');
+    if(rewarded){
+      coins+=100;
+      localStorage.setItem('ahp_coins',coins);
+      ui();
+      document.getElementById('again').onclick=start;
+    }else{
+      document.getElementById('again').onclick=start;
+    }
+  };
+}
+addEventListener('keydown',e=>{if(e.key==='ArrowLeft')act('left');if(e.key==='ArrowRight')act('right');if(e.key==='ArrowUp'||e.key===' ')act('jump');if(e.key==='ArrowDown')act('slide')});
+let tx=0,ty=0;c.onpointerdown=e=>{tx=e.clientX;ty=e.clientY};c.onpointerup=e=>{let dx=e.clientX-tx,dy=e.clientY-ty;if(Math.max(Math.abs(dx),Math.abs(dy))<30)return;if(Math.abs(dx)>Math.abs(dy))act(dx>0?'right':'left');else act(dy<0?'jump':'slide')};
+
+function spawnObj(type,z,l){objects.push({type,z,l,hit:false})}
+function spawnObstacle(){let r=Math.random();spawnObj(r<.25?'car':r<.45?'barrier':r<.62?'fire':r<.8?'hole':'train',140,Math.floor(Math.random()*3))}
+function spawnCoins(){let l=Math.floor(Math.random()*3);for(let i=0;i<5;i++)spawnObj('coin',125+i*10,l)}
+
+function update(dt){
+ if(!playing)return;
+ speed=Math.min(34,speed+dt*.7);distance+=speed*dt;score+=speed*dt*.7;
+ lane+=(targetLane-lane)*Math.min(1,dt*10);jump+=vy*dt;vy-=31*dt;if(jump<0){jump=0;vy=0}if(slide>0)slide-=dt;
+ spawn-=dt;coinSpawn-=dt;if(spawn<=0){spawnObstacle();spawn=Math.max(.8,1.7-(speed-18)*.02)+Math.random()*.5}if(coinSpawn<=0){spawnCoins();coinSpawn=2.5}
+ for(const o of objects){
+  o.z-=speed*dt;
+  if(o.type==='coin'&&o.z<5&&o.z>0&&!o.hit&&Math.abs(o.l-lane)<.4){o.hit=true;coins++}
+  if(o.type!=='coin'&&o.z<5&&o.z>0&&!o.hit&&Math.abs(o.l-lane)<.42){
+   let safe=(o.type==='hole'&&jump>1.7)||(o.type==='barrier'&&jump>2)||(o.type==='fire'&&jump>2)||(o.type==='car'&&jump>2.3)||(o.type==='train'&&slide>0);
+   if(!safe){o.hit=true;lives--;if(lives<=0){end();return}}
+  }
+ }
+ objects=objects.filter(o=>o.z>-8);ui()
+}
+function background(){
+ let g=ctx.createLinearGradient(0,0,0,H*.6);g.addColorStop(0,'#183d55');g.addColorStop(1,'#c8b28b');ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+ ctx.fillStyle='#303638';ctx.fillRect(0,H*.39,W,H*.61);
+ for(let z=150;z>8;z-=18){building(-1,z,8+(z%5),12+(z%8));building(1,z+5,8+(z%6),13+(z%7))}
+ let a=project(-roadWidth/2,2),b=project(roadWidth/2,2),d=project(-roadWidth/2,150),e=project(roadWidth/2,150);
+ quad(a,b,e,d,'#333a3d');
+ for(let z=10-(distance%12);z<150;z+=12)for(const k of[-.5,.5]){let p=project(k*laneWidth,z),q=project(k*laneWidth,z+5);quad({x:p.x-2,y:p.y},{x:p.x+2,y:p.y},{x:q.x+2,y:q.y},{x:q.x-2,y:q.y},'#e9e2c9')}
+}
+function quad(a,b,c,d,col){ctx.fillStyle=col;ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.lineTo(c.x,c.y);ctx.lineTo(d.x,d.y);ctx.closePath();ctx.fill()}
+function building(side,z,w,h){
+  // Detailed Senegal-inspired street buildings, kept in the same metric perspective.
+  const xx=side*(roadWidth/2+w/2+1.4);
+  const p0=project(xx,z,0), p1=project(xx+side*w,z,0);
+  const p2=project(xx+side*w,z,h), p3=project(xx,z,h);
+
+  // Main facade
+  const palettes=["#d6b27c","#c98e62","#b8a17d","#d1c3a1","#a96f55","#e0c28e"];
+  quad(p0,p1,p2,p3,palettes[Math.floor(z/18)%palettes.length]);
+
+  // Roof/parapet
+  const roofH=Math.min(0.55,h*.12);
+  const r0=project(xx,z, h), r1=project(xx+side*w,z,h);
+  const rr0=project(xx,z,h+roofH), rr1=project(xx+side*w,z,h+roofH);
+  quad(r0,r1,rr1,rr0,"#6f5545");
+
+  // Door centered on facade
+  const doorW=Math.max(.75,w*.16), doorH=Math.min(2.2,h*.48);
+  const dx=xx+side*(w/2-doorW/2);
+  const da=project(dx,z-.035,0), db=project(dx+side*doorW,z-.035,0);
+  const dc=project(dx+side*doorW,z-.035,doorH), dd=project(dx,z-.035,doorH);
+  quad(da,db,dc,dd,"#573d31");
+
+  // Windows in two/three rows, with frames
+  const rows=Math.max(1,Math.floor(h/3.1));
+  const cols=Math.max(2,Math.floor(w/2.4));
+  for(let row=0;row<rows;row++){
+    const yy=2.0+row*2.65;
+    if(yy+1.1>=h) continue;
+    for(let col=0;col<cols;col++){
+      const inset=.55+col*(w-1.1)/cols;
+      const ww=Math.min(1.05,(w-1.1)/cols*.62);
+      const wx=xx+side*inset;
+      const a=project(wx,z-.04,yy), b=project(wx+side*ww,z-.04,yy);
+      const c=project(wx+side*ww,z-.04,yy+1.05), d=project(wx,z-.04,yy+1.05);
+      quad(a,b,c,d,"#b8d9d6");
+      // dark frame
+      ctx.strokeStyle="#514941";
+      ctx.lineWidth=Math.max(1,a.s*.018);
+      ctx.strokeRect(Math.min(a.x,b.x),Math.min(c.y,d.y),Math.abs(b.x-a.x),Math.abs(a.y-d.y));
+      // center mullion
+      const mid=project(wx+side*ww/2,z-.05,yy);
+      const mid2=project(wx+side*ww/2,z-.05,yy+1.05);
+      ctx.beginPath();ctx.moveTo(mid.x,mid.y);ctx.lineTo(mid2.x,mid2.y);ctx.stroke();
+    }
+  }
+
+  // Small awning/sign band for a more urban, lived-in appearance
+  if(Math.floor(z/18)%3===0){
+    const sy=Math.min(h-1.1,2.0);
+    const sa=project(xx+side*.3,z-.06,sy), sb=project(xx+side*(w-.3),z-.06,sy);
+    const sc=project(xx+side*(w-.3),z-.06,sy+.42), sd=project(xx+side*.3,z-.06,sy+.42);
+    quad(sa,sb,sc,sd,"#3b6870");
+  }
+}
+function drawObject(o){
+ let p=project(laneX(o.l),o.z),s=p.s;
+ if(o.type==='coin'){let q=project(laneX(o.l),o.z,2.0);ctx.strokeStyle='#ffd83d';ctx.lineWidth=Math.max(2,q.s*.05);ctx.beginPath();ctx.arc(q.x,q.y,q.s*.16,0,Math.PI*2);ctx.stroke();return}
+ if(o.type==='hole'){ctx.fillStyle='#08090a';ctx.beginPath();ctx.ellipse(p.x,p.y,s*.65,s*.16,0,0,Math.PI*2);ctx.fill();return}
+ let w=s*1.5,h=s*.7;
+ if(o.type==='car'){ctx.fillStyle='#bd3c38';ctx.fillRect(p.x-w/2,p.y-h,w,h);ctx.fillStyle='#1d2930';ctx.fillRect(p.x-w*.32,p.y-h*.7,w*.64,h*.25)}
+ if(o.type==='barrier'){ctx.fillStyle='#eee8dc';ctx.fillRect(p.x-w/2,p.y-h,w,h);ctx.fillStyle='#d64a3d';ctx.fillRect(p.x-w*.35,p.y-h,w*.12,h);ctx.fillRect(p.x,w=-w*.35+w*.35,p.y-h,w*.12,h)}
+ if(o.type==='fire'){ctx.fillStyle='#ff5b16';ctx.beginPath();ctx.ellipse(p.x,p.y,s*.65,s*.22,0,0,Math.PI*2);ctx.fill()}
+ if(o.type==='train'){let tw=s*1.8,th=s*1.5;ctx.fillStyle='#315263';ctx.fillRect(p.x-tw/2,p.y-th,tw,th);ctx.fillStyle='#b9e4eb';ctx.fillRect(p.x-tw*.3,p.y-th*.55,tw*.22,th*.2);ctx.fillRect(p.x+tw*.08,p.y-th*.55,tw*.22,th*.2)}
+}
+function player(){
+ let p=project(laneX(lane),3.8,jump),s=p.s,body=s*.95;
+ let sh=project(laneX(lane),3.8);
+ const shadowScale=Math.max(.18,1-jump*.22);
+ ctx.fillStyle='#0006';ctx.beginPath();ctx.ellipse(sh.x,sh.y,s*.43*shadowScale,s*.1*shadowScale,0,0,Math.PI*2);ctx.fill();
+ if(jump>0.15){
+   ctx.strokeStyle='#ffffffaa';ctx.lineWidth=Math.max(1,s*.025);
+   ctx.beginPath();ctx.arc(p.x,p.y-body*.42,s*.42,0,Math.PI*2);ctx.stroke();
+ }
+ ctx.strokeStyle='#20252a';ctx.lineWidth=Math.max(2,s*.09);ctx.beginPath();ctx.moveTo(p.x-s*.1,p.y-body*.25);ctx.lineTo(p.x-s*.22,p.y+body*.1);ctx.moveTo(p.x+s*.1,p.y-body*.25);ctx.lineTo(p.x+s*.22,p.y+body*.1);ctx.stroke();
+ ctx.fillStyle='#2579df';ctx.fillRect(p.x-s*.17,p.y-body*.64,s*.34,body*.45);
+ ctx.fillStyle='#70422d';ctx.beginPath();ctx.arc(p.x,p.y-body*.8,s*.18,0,Math.PI*2);ctx.fill();
+ ctx.fillStyle='#151515';ctx.beginPath();ctx.arc(p.x,p.y-body*.88,s*.17,Math.PI,Math.PI*2);ctx.fill();
+}
+function render(){background();objects.slice().sort((a,b)=>b.z-a.z).forEach(o=>{if(o.z>0)drawObject(o)});player()}
+function loop(t){let dt=Math.min(.035,(t-last)/1000);last=t;update(dt);render();requestAnimationFrame(loop)}
+ui();requestAnimationFrame(loop);
+</script>
+</body></html>
